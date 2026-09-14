@@ -1,15 +1,11 @@
 /**
- * Composition root: owns no search logic, just decides which state to render.
- *
- * The render branches are mutually exclusive and ordered by precedence —
- * error, then loading, then empty, then results — so the page can never show a
- * spinner over stale rows or an empty state next to an error.
+ * Composition root: no search logic, just picks which state to render —
+ * error, then loading, then empty, then results, in that precedence.
  */
 
 import { useEffect, useState } from 'react'
 import { Alert, Box, Container, Stack, Typography } from '@mui/material'
 import { fetchCities } from './api/client'
-import { hasActiveFilters } from './api/searchState'
 import { useListingSearch } from './hooks/useListingSearch'
 import { SearchForm } from './components/SearchForm'
 import { ResultsTable } from './components/ResultsTable'
@@ -17,11 +13,10 @@ import { PaginationBar } from './components/PaginationBar'
 import { EmptyView, ErrorView, LoadingView } from './components/StateViews'
 
 export default function App() {
-  const { form, data, loading, error, updateForm, goToPage, reset, retry } =
+  const { form, data, loading, error, updateForm, runSearch, goToPage, reset, retry } =
     useListingSearch()
 
-  // Cities come from the API so the dropdown reflects the real data rather
-  // than a hardcoded list that silently rots.
+  // From the API so the dropdown reflects real data, not a stale hardcoded list.
   const [cities, setCities] = useState<string[]>([])
   const [citiesFailed, setCitiesFailed] = useState(false)
 
@@ -38,9 +33,6 @@ export default function App() {
   const fieldIssues = error?.fieldIssues() ?? {}
   const hasResults = Boolean(data && data.items.length > 0)
   const isEmpty = Boolean(data && data.items.length === 0)
-  // No criteria entered means every listing ranks on time-on-market alone —
-  // showing a relevance score for a ranking nobody asked for reads as noise.
-  const showScore = hasActiveFilters(form)
 
   return (
     <Container maxWidth="lg" sx={{ py: 4 }}>
@@ -65,6 +57,7 @@ export default function App() {
           cities={cities}
           fieldIssues={fieldIssues}
           onChange={updateForm}
+          onSearch={runSearch}
           onReset={reset}
         />
 
@@ -73,8 +66,7 @@ export default function App() {
         {!error && !loading && isEmpty && <EmptyView onReset={reset} />}
         {!error && !loading && hasResults && data && (
           <>
-            <PaginationBar pageInfo={data.pageInfo} onChange={goToPage} />
-            <ResultsTable items={data.items} showScore={showScore} />
+            <ResultsTable items={data.items} />
             <PaginationBar pageInfo={data.pageInfo} onChange={goToPage} />
           </>
         )}

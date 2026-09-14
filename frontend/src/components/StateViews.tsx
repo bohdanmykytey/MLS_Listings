@@ -1,10 +1,6 @@
 /**
- * Loading / empty / error views.
- *
- * Separated from the table so exactly one of them renders at a time, and so
- * the distinction the brief asks for stays visible: a rejected query (400) is
- * an error the user can fix, while a valid query that matched nothing is an
- * ordinary empty result — not a failure.
+ * Loading / empty / error views, kept separate so a rejected query (400)
+ * reads as fixable, distinct from a valid query that matched nothing.
  */
 
 import { Alert, AlertTitle, Box, Button, CircularProgress, Paper, Typography } from '@mui/material'
@@ -36,8 +32,7 @@ export function EmptyView({ onReset }: { onReset: () => void }) {
 
 export function ErrorView({ error, onRetry }: { error: ApiError; onRetry: () => void }) {
   const general = error.generalIssues()
-  // Field-level issues are shown on the inputs themselves; repeating them here
-  // would say the same thing twice.
+  // Field-level issues render on the inputs; no need to repeat them here.
   const isValidation = error.code === 'INVALID_REQUEST'
 
   return (

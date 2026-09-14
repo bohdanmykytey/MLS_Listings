@@ -1,9 +1,6 @@
 /**
- * Mirrors the backend contract in `backend/app/models.py`.
- *
- * Hand-maintained rather than generated: the API is small, and a generated
- * client would be more machinery than this exercise needs. If these drift, the
- * backend is the source of truth. (`GET /openapi.json` is the reference.)
+ * Mirrors `backend/app/models.py` by hand — the API is small enough that a
+ * generated client isn't worth it. Backend is the source of truth if they drift.
  */
 
 export type ListingStatus = 'active' | 'pending' | 'sold'
@@ -17,8 +14,7 @@ export interface ScoreBreakdown {
 }
 
 export interface ScoredListing {
-  /** Composite "SOURCE:ID" — `id` alone is not unique across feeds, so this
-   *  is what React keys and dedupe references use. */
+  /** Composite "SOURCE:ID" — `id` alone isn't unique across feeds. */
   key: string
   id: string
   source: string
@@ -55,8 +51,7 @@ export interface SearchResponse {
   applied: Record<string, unknown>
 }
 
-/** The form's state. Text inputs stay strings so a half-typed number is not
- *  coerced to NaN mid-keystroke; conversion happens once, in the client. */
+/** Text inputs stay strings so a half-typed number isn't coerced to NaN. */
 export interface SearchFormState {
   minPrice: string
   maxPrice: string

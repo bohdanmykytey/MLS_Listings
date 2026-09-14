@@ -1,21 +1,11 @@
 /**
- * Serializing search state to and from a query string.
+ * Serializes search state to and from a query string. One serializer drives
+ * both the API request and the address bar, so a copied URL always
+ * reproduces the results it was copied from.
  *
- * One module owns both directions, and the *same* serializer produces the API
- * request and the browser address bar. That is the point: the URL you can copy
- * out of the address bar is exactly the query that produced the results on
- * screen, so a shared link and a `curl` of the API can never disagree.
- *
- * Parsing is deliberately lenient about values and strict about structure:
- *
- *  - Text and numeric filters are kept as raw strings, even nonsense ones.
- *    The server owns validation, so `?minPrice=abc` should reach it and come
- *    back as a 400 the user can see — not be silently dropped here, which
- *    would show results that don't match the URL.
- *  - `dedupe` maps to a checkbox, which cannot render an invalid value, so
- *    anything other than "true" reads as off.
- *  - `page` must be a positive integer to be usable as a number; anything
- *    else means page 1.
+ * Parsing is lenient about values, strict about structure: `?minPrice=abc`
+ * reaches the server as-is and comes back a visible 400, rather than being
+ * silently dropped here.
  */
 
 import type { SearchFormState } from './types'
@@ -42,17 +32,10 @@ const TEXT_FIELDS = [
 ] as const satisfies readonly (keyof SearchFormState)[]
 
 /**
- * Has the user specified any actual search criteria?
- *
- * Built on `buildSearchParams` rather than a second, hand-written definition
- * of "empty" — the two would inevitably drift, and this one is intentionally
- * scoped to filters: `page` and `pageSize` are navigation and a display
- * preference, not search criteria, so paging or resizing the page never flips
- * this from false to true.
- *
- * Used to decide whether a relevance score means anything to show. With no
- * criteria entered, every listing scores on time-on-market alone, and
- * surfacing a number for a ranking nobody asked for reads as noise.
+ * Has the user specified any actual search criteria? `page`/`pageSize` don't
+ * count — those are navigation, not criteria. Currently unwired (an earlier
+ * version used it to hide the score column, since reverted) but kept as a
+ * tested primitive.
  */
 export function hasActiveFilters(form: SearchFormState): boolean {
   const params = buildSearchParams(form, 1)
@@ -62,9 +45,7 @@ export function hasActiveFilters(form: SearchFormState): boolean {
 export function buildSearchParams(form: SearchFormState, page: number): URLSearchParams {
   const params = new URLSearchParams()
 
-  // Blank inputs are omitted entirely: "no value" must mean "no filter".
-  // Note we do NOT validate ranges here — the server owns validation, and
-  // duplicating those rules client-side is how the two drift apart.
+  // Blank means "no filter"; ranges aren't validated here — the server owns that.
   for (const name of TEXT_FIELDS) {
     const trimmed = String(form[name]).trim()
     if (trimmed !== '') params.set(name, trimmed)

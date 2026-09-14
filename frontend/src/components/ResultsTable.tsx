@@ -1,25 +1,14 @@
 /**
- * The ranked result rows.
+ * The ranked result rows: address, price, bedrooms, and relevance score
+ * (plus its two components in a tooltip), per the brief's minimum fields.
  *
- * Shows the four fields the brief requires (address, price, bedrooms,
- * relevance score) plus the score's two components, so a rank is explainable
- * at a glance rather than being an opaque number.
+ * Column sorting is page-scoped, client-side: it reorders the current page
+ * only, it never re-queries — relevance still decides which rows reach the
+ * page at all. Surfaced in the UI since it's easy to confuse with a
+ * server-side sort over the whole result set.
  *
- * Column sorting is deliberately **page-scoped**: clicking a header reorders
- * the rows already on screen, it does not re-query. That distinction matters
- * and is surfaced in the UI, because the two are easy to confuse — a
- * server-side "price ascending" would mean the cheapest listings overall,
- * whereas this means the current page's listings arranged by price. Relevance
- * still decides which listings reach the page at all; this only changes how
- * they are laid out once they are here.
- *
- * Done client-side because it needs no round trip and cannot desynchronise
- * pagination: the set of rows never changes, only their order.
- *
- * `showScore` hides the Score column entirely on an unfiltered search. With
- * no criteria entered there is nothing to be relevant *to* — every listing
- * ranks on time-on-market alone — so a number implying a considered rank
- * would be misleading rather than merely uninteresting.
+ * `showScore` can hide the Score column; unused today (the brief lists it as
+ * always-shown) but kept as a tested prop.
  */
 
 import { useMemo, useState } from 'react'
@@ -57,16 +46,9 @@ const currency = new Intl.NumberFormat('en-US', {
   maximumFractionDigits: 0,
 })
 
-/**
- * Colour band for a relevance score.
- *
- * Thresholds are calibrated to the formula's realistic output range, not to a
- * naive 0-100 split. A perfect score needs both a price on the nose *and* a
- * listing at the far end of the negotiating window, which almost never
- * co-occur — across plausible budgets the top result lands in the 50-70 band
- * and the median nearer 15. Splitting at 70/40 would paint nearly every row
- * grey and tell the user nothing.
- */
+/** Colour band calibrated to realistic scores, not a naive 0-100 split —
+ *  a perfect 100 needs both a price on target and max negotiability, which
+ *  rarely co-occur, so top results typically land around 50-70. */
 function scoreColor(score: number): 'success' | 'warning' | 'default' {
   if (score >= 40) return 'success'
   if (score >= 20) return 'warning'
@@ -80,8 +62,7 @@ export function ResultsTable({
   items: ScoredListing[]
   showScore?: boolean
 }) {
-  // `null` means "untouched": render exactly what the server sent, preserving
-  // its ranking and its tie-break rather than re-deriving an order here.
+  // null = untouched: render the server's own order/tie-break as-is.
   const [column, setColumn] = useState<SortableColumn | null>(null)
   const [direction, setDirection] = useState<SortDirection>('desc')
 
@@ -92,14 +73,12 @@ export function ResultsTable({
       const [x, y] = [read(a), read(b)]
       const cmp = x < y ? -1 : x > y ? 1 : 0
       if (cmp !== 0) return direction === 'asc' ? cmp : -cmp
-      // Equal values fall back to the composite key. Not negated with the
-      // direction: a tie-break exists to be stable, so flipping the column
-      // must not reshuffle rows that were never distinguishable anyway.
+      // Tie-break on key, never negated — direction shouldn't reshuffle ties.
       return a.key.localeCompare(b.key)
     })
   }, [items, column, direction])
 
-  /** Clicking the active column flips direction; a new column starts descending. */
+  /** Active column flips direction; a new column starts descending. */
   const toggle = (next: SortableColumn) => {
     if (next === column) setDirection((d) => (d === 'asc' ? 'desc' : 'asc'))
     else {
@@ -134,7 +113,7 @@ export function ResultsTable({
         </TableHead>
         <TableBody>
           {rows.map((item) => (
-            // Keyed by the composite source:id — `id` is not unique across feeds.
+            // Composite key: `id` alone isn't unique across feeds.
             <TableRow key={item.key} hover>
               <TableCell>
                 <Typography variant="body2">{item.address}</Typography>

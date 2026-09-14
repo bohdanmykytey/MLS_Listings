@@ -1,13 +1,5 @@
-"""Injectable "today".
-
-Scoring needs a reference date to measure days on market against. Reading `date.today()` inside the
-formula would make every test time-dependent and every screenshot stale, so
-the reference date is resolved once per request through this seam and passed
-down explicitly.
-
-`LISTING_SEARCH_REFERENCE_DATE=2026-09-12` pins it, which is how the test
-suite and a reproducible demo get stable scores.
-"""
+"""Injectable "today", so scoring never calls `date.today()` directly and
+stays reproducible. `LISTING_SEARCH_REFERENCE_DATE=YYYY-MM-DD` pins it."""
 
 from __future__ import annotations
 
@@ -18,12 +10,7 @@ REFERENCE_DATE_ENV = "LISTING_SEARCH_REFERENCE_DATE"
 
 
 def today() -> date:
-    """The date days-on-market is measured against, honouring the override.
-
-    Indirection exists so "now" is an input to the system rather than something
-    the scoring formula reaches out and grabs — which is what makes tests
-    deterministic and a demo's scores stable from one day to the next.
-    """
+    """Reference date for days-on-market, honouring the env override."""
     override = os.environ.get(REFERENCE_DATE_ENV)
     if override:
         return date.fromisoformat(override)

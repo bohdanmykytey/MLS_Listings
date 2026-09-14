@@ -1,9 +1,7 @@
 /**
- * The filter inputs.
- *
- * Server-side validation errors are mapped back onto the specific field that
- * caused them (via `ApiError.fieldIssues()`), so a rejected query points at
- * the input to fix instead of showing a banner and leaving the user guessing.
+ * The filter inputs. Editing only updates the draft; wrapped in a real
+ * <form> so Enter submits like any other search box. Server-side validation
+ * errors map back onto the offending field via `ApiError.fieldIssues()`.
  */
 
 import {
@@ -21,6 +19,7 @@ import {
   Typography,
 } from '@mui/material'
 import ClearIcon from '@mui/icons-material/Clear'
+import SearchIcon from '@mui/icons-material/Search'
 import type { SearchFormState } from '../api/types'
 
 interface Props {
@@ -28,15 +27,17 @@ interface Props {
   cities: string[]
   fieldIssues: Record<string, string>
   onChange: (patch: Partial<SearchFormState>) => void
+  onSearch: () => void
   onReset: () => void
 }
 
-export function SearchForm({ form, cities, fieldIssues, onChange, onReset }: Props) {
-  /**
-   * A per-field clear control, so emptying one input is a single click rather
-   * than holding backspace. Only rendered once there is something to clear —
-   * an empty adornment slot on every field would just be clutter.
-   */
+export function SearchForm({ form, cities, fieldIssues, onChange, onSearch, onReset }: Props) {
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault() // stop the browser's default form navigation
+    onSearch()
+  }
+
+  /** Per-field clear button; only rendered once there's something to clear. */
   const clearAdornment = (name: keyof SearchFormState, label: string) =>
     form[name]
       ? {
@@ -55,7 +56,7 @@ export function SearchForm({ form, cities, fieldIssues, onChange, onReset }: Pro
         }
       : {}
 
-  /** Shared props for a numeric text input, including any server-side issue. */
+  /** Shared props for a numeric text input, incl. server-side issue text. */
   const numeric = (name: keyof SearchFormState, label: string, helper?: string) => ({
     label,
     value: String(form[name]),
@@ -75,7 +76,7 @@ export function SearchForm({ form, cities, fieldIssues, onChange, onReset }: Pro
         Filters
       </Typography>
 
-      <Stack spacing={1.5}>
+      <Stack component="form" onSubmit={handleSubmit} noValidate spacing={1.5}>
         <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5}>
           <TextField {...numeric('minPrice', 'Min price')} />
           <TextField {...numeric('maxPrice', 'Max price')} />
@@ -130,18 +131,22 @@ export function SearchForm({ form, cities, fieldIssues, onChange, onReset }: Pro
                 <Checkbox
                   checked={form.dedupe}
                   onChange={(e) => onChange({ dedupe: e.target.checked })}
-                  // Explicit: the surrounding Tooltip leaves the input without
-                  // an associated <label>, so screen readers would otherwise
-                  // announce an unnamed checkbox.
+                  // Tooltip wrapper leaves no associated <label>; name it explicitly.
                   slotProps={{ input: { 'aria-label': 'Merge duplicates across feeds' } }}
                 />
               }
               label="Merge duplicates across feeds"
             />
           </Tooltip>
-          <Button onClick={onReset} size="small">
-            Reset
-          </Button>
+          <Stack direction="row" spacing={1}>
+            {/* type="button": inside a <form>, the default type is "submit". */}
+            <Button type="button" onClick={onReset} size="small">
+              Reset
+            </Button>
+            <Button type="submit" variant="contained" size="small" startIcon={<SearchIcon />}>
+              Search
+            </Button>
+          </Stack>
         </Box>
       </Stack>
     </Paper>

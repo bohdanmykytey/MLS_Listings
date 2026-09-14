@@ -1,17 +1,7 @@
-"""Geographic distance helpers.
-
-Every listing carries latitude/longitude, but no stated requirement uses them.
-This module implements the part that is easy to get subtly wrong (great-circle
-distance) so that adding a radius search later is a wiring change, not a
-research task:
-
-  1. add `lat`, `lng`, `radiusMiles` to `SearchParams` (validated as a group —
-     all three or none),
-  2. add `within_radius(...)` to the conjunction in `filters.apply_filters`.
-
-Intentionally not exposed as a query parameter yet: the handout doesn't ask
-for it, and shipping an untested public parameter is worse than shipping none.
-"""
+"""Geographic distance helpers. Unwired: no requirement asks for radius
+search, but great-circle distance is easy to get subtly wrong, so it's ready
+here — wiring it up later is a `SearchParams` field plus one filter, not new
+logic."""
 
 from __future__ import annotations
 
@@ -39,11 +29,7 @@ def within_radius(
     center_lng: float,
     radius_miles: float,
 ) -> bool:
-    """Is a listing inside the search radius? Boundary is inclusive.
-
-    The predicate a radius filter would call, kept next to the distance maths
-    so wiring one up later is a parameter change rather than new logic.
-    """
+    """Is a listing inside the search radius? Boundary inclusive."""
     return (
         haversine_miles(listing_lat, listing_lng, center_lat, center_lng) <= radius_miles
     )

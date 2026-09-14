@@ -1,17 +1,12 @@
 /**
- * The single place HTTP happens.
- *
- * Its job beyond fetching is turning the backend's error envelope into a
- * typed `ApiError` the UI can render without re-parsing JSON. Query-string
- * construction lives in `searchState.ts`, because the address bar needs the
- * same serializer.
+ * The single place HTTP happens. Turns the backend's error envelope into a
+ * typed `ApiError`; query-string construction lives in `searchState.ts`.
  */
 
 import { buildSearchParams } from './searchState'
 import type { ErrorBody, ErrorDetail, SearchFormState, SearchResponse } from './types'
 
-/** A structured failure. `details` carries per-field issues, which the form
- *  uses to highlight the specific input the server rejected. */
+/** A structured failure; `details` carries per-field issues for the form. */
 export class ApiError extends Error {
   readonly status: number
   readonly code: string
@@ -44,8 +39,7 @@ async function request<T>(path: string, signal?: AbortSignal): Promise<T> {
   const response = await fetch(path, { signal, headers: { Accept: 'application/json' } })
 
   if (!response.ok) {
-    // Every error from our API is an ErrorEnvelope, but a proxy or a crash
-    // could return something else — so parsing is defensive.
+    // Parsing is defensive: a proxy or crash could return a non-envelope body.
     let body: ErrorBody = {
       code: 'UNKNOWN',
       message: `Request failed with status ${response.status}`,

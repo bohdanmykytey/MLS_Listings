@@ -1,10 +1,6 @@
 /**
- * Page controls plus the result count.
- *
- * MUI's Pagination is 1-indexed, matching the API, so no off-by-one
- * translation is needed. The count text is rendered from the server's
- * `pageInfo` rather than from `items.length`, so it describes the whole result
- * set and not just the visible page.
+ * Page controls plus the result count. Driven by the server's `pageInfo`,
+ * not `items.length`, so the count describes the whole result set.
  */
 
 import { Pagination, Stack, Typography } from '@mui/material'

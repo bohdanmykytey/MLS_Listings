@@ -1,27 +1,16 @@
 /**
  * Owns the search request lifecycle so components stay presentational.
  *
- * Five things this exists to get right:
+ * Search is explicit: typing only updates the `form` draft. Nothing fetches
+ * or touches the URL until the user submits (Search, Enter, a page click, or
+ * Reset) — `submitted` is the query that actually produced what's on screen.
+ * A debounced auto-fetch was tried earlier and dropped: a still-typing user
+ * hasn't finished stating their query, so fetching mid-keystroke is wasted work.
  *
- *  - Stale responses. Typing fires overlapping requests, and they can resolve
- *    out of order, so an older response could overwrite a newer one. Each run
- *    aborts the previous one and re-checks that it is still current before
- *    committing state.
- *  - Page resets. Changing a filter while on page 3 would otherwise request
- *    page 3 of a different result set. Filter edits reset to page 1; only the
- *    pager moves pages.
- *  - Exactly one of loading / error / empty / results is true at a time, so
- *    the UI can't render a spinner over a stale error.
- *  - The address bar reflects the search, so a result set can be shared,
- *    bookmarked, reloaded, and walked with the back button.
- *  - Repeated queries render from cache instead of flashing a spinner.
- *
- * Caching strategy is stale-while-revalidate: a cached response paints
- * immediately, and the network request still goes out to confirm it. When the
- * fresh response is identical the cached object is kept by reference, so React
- * re-renders nothing. The user sees instant navigation; correctness is not
- * traded away for it, which a cache-only strategy would do the moment a
- * listing changed underneath us.
+ * Also handles: aborting a superseded in-flight request before committing a
+ * new one, resetting to page 1 on every new search, keeping the address bar
+ * in sync with `submitted` (not the draft) so links/reload/back-forward all
+ * work, and a stale-while-revalidate cache keyed by query string.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react'
@@ -36,20 +25,11 @@ import type { SearchFormState, SearchResponse } from '../api/types'
 
 export { DEFAULT_FORM }
 
-const DEBOUNCE_MS = 300
-
 /** Bounded so a long session can't grow the cache without limit. */
 const MAX_CACHE_ENTRIES = 50
 
-/**
- * Structural comparison of two responses.
- *
- * Used to decide whether a revalidation actually changed anything. Comparing
- * serialized JSON is sound here because both values come from the same server
- * serializer, so key order is stable — and the payload is one page of results,
- * not a large document. For bigger responses this would become a field-by-field
- * comparison or a server-provided ETag.
- */
+/** Structural equality, so an unchanged revalidation keeps the same
+ *  object reference and React re-renders nothing. */
 export function sameResponse(a: SearchResponse | null, b: SearchResponse | null): boolean {
   if (a === b) return true
   if (!a || !b) return false
@@ -57,37 +37,42 @@ export function sameResponse(a: SearchResponse | null, b: SearchResponse | null)
 }
 
 export interface UseListingSearch {
+  /** The draft the inputs are bound to. Not yet searched. */
   form: SearchFormState
+  /** The page of the *submitted* query currently on screen. */
   page: number
   data: SearchResponse | null
   loading: boolean
   error: ApiError | null
-  /** Patch one or more filters; always returns to page 1. */
+  /** Patch the draft. Does not search or touch the URL. */
   updateForm: (patch: Partial<SearchFormState>) => void
+  /** Submit the draft: it becomes the query, page resets to 1, and it fetches. */
+  runSearch: () => void
   goToPage: (page: number) => void
+  /** Clear the draft and immediately search with it. */
   reset: () => void
   retry: () => void
 }
 
 export function useListingSearch(): UseListingSearch {
-  // The initial search comes from the URL, so a shared or bookmarked link
-  // opens on the results it promised rather than on defaults.
+  // Initial search comes from the URL, so a shared/bookmarked link opens on
+  // the results it promised. The draft starts equal to it.
   const [initial] = useState(() => parseSearchState(window.location.search))
 
   const [form, setForm] = useState<SearchFormState>(initial.form)
+  const [submitted, setSubmitted] = useState<SearchFormState>(initial.form)
   const [page, setPage] = useState(initial.page)
   const [data, setData] = useState<SearchResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<ApiError | null>(null)
-  // Bumped to force a re-fetch with identical inputs (the retry button).
+  // Bumped to force a re-fetch of an unchanged query (the retry button).
   const [attempt, setAttempt] = useState(0)
 
   const inFlight = useRef<AbortController | null>(null)
   const cache = useRef(new Map<string, SearchResponse>())
 
-  // How the next state change should affect history, and whether it came from
-  // the browser's own back/forward (in which case we must not write at all).
-  const historyMode = useRef<'push' | 'replace'>('replace')
+  // True while a submitted/page change came from popstate — the URL already
+  // matches it, so the sync effect below must not rewrite it.
   const restoringFromHistory = useRef(false)
   const hasMounted = useRef(false)
 
@@ -97,12 +82,10 @@ export function useListingSearch(): UseListingSearch {
     setError(null)
   }, [])
 
-  // --- keep the address bar in step with the search ------------------------
+  // Push one history entry per deliberate action (search/page/reset/restore).
   useEffect(() => {
-    // Don't rewrite a clean "/" on first paint, and don't fight the browser
-    // when the user is the one navigating.
     if (!hasMounted.current) {
-      hasMounted.current = true
+      hasMounted.current = true // don't rewrite a clean "/" on first paint
       return
     }
     if (restoringFromHistory.current) {
@@ -110,106 +93,97 @@ export function useListingSearch(): UseListingSearch {
       return
     }
 
-    const url = searchStateToUrl(form, page)
+    const url = searchStateToUrl(submitted, page)
     if (url === window.location.pathname + window.location.search) return
 
-    // Typing replaces, so one filter word doesn't become eight history entries;
-    // deliberate navigation (paging, reset) pushes, so back undoes one step.
-    if (historyMode.current === 'push') window.history.pushState(null, '', url)
-    else window.history.replaceState(null, '', url)
+    window.history.pushState(null, '', url)
+  }, [submitted, page])
 
-    historyMode.current = 'replace'
-  }, [form, page])
-
-  // --- back / forward ------------------------------------------------------
   useEffect(() => {
     const onPopState = () => {
       const restored = parseSearchState(window.location.search)
       restoringFromHistory.current = true
       setForm(restored.form)
+      setSubmitted(restored.form)
       setPage(restored.page)
     }
     window.addEventListener('popstate', onPopState)
     return () => window.removeEventListener('popstate', onPopState)
   }, [])
 
-  // --- fetching ------------------------------------------------------------
+  // Depends on `submitted`, never on `form`: a draft edit must not fetch.
   useEffect(() => {
-    const key = buildSearchParams(form, page).toString()
+    const key = buildSearchParams(submitted, page).toString()
     const cached = cache.current.get(key)
 
     if (cached) {
-      // Paint immediately; the request below confirms it.
-      commit(cached)
+      commit(cached) // paint immediately; the request below confirms it
       setLoading(false)
     } else {
       setLoading(true)
     }
 
-    const timer = setTimeout(() => {
-      inFlight.current?.abort()
-      const controller = new AbortController()
-      inFlight.current = controller
+    inFlight.current?.abort()
+    const controller = new AbortController()
+    inFlight.current = controller
 
-      searchListings(form, page, controller.signal)
-        .then((response) => {
-          if (controller.signal.aborted) return
+    searchListings(submitted, page, controller.signal)
+      .then((response) => {
+        if (controller.signal.aborted) return
 
-          // Re-insert to move this key to the end: Map preserves insertion
-          // order, so the oldest key is the first one out when we trim.
-          cache.current.delete(key)
-          cache.current.set(key, response)
-          if (cache.current.size > MAX_CACHE_ENTRIES) {
-            cache.current.delete(cache.current.keys().next().value as string)
-          }
+        // Re-insert to move this key to the end (Map preserves insertion
+        // order), so the oldest key is evicted first.
+        cache.current.delete(key)
+        cache.current.set(key, response)
+        if (cache.current.size > MAX_CACHE_ENTRIES) {
+          cache.current.delete(cache.current.keys().next().value as string)
+        }
 
-          commit(response)
-        })
-        .catch((err: unknown) => {
-          if (controller.signal.aborted) return
-          // An invalid query has no valid result set; clearing `data` prevents
-          // showing rows that don't match what the inputs now say. A failed
-          // query is also dropped from the cache so a retry really retries.
-          cache.current.delete(key)
-          setData(null)
-          setError(
-            err instanceof ApiError
-              ? err
-              : new ApiError(0, {
-                  code: 'NETWORK_ERROR',
-                  message: 'Could not reach the search service. Is the API running?',
-                  details: [],
-                }),
-          )
-        })
-        .finally(() => {
-          if (!controller.signal.aborted) setLoading(false)
-        })
-    }, DEBOUNCE_MS)
-
-    return () => clearTimeout(timer)
-  }, [form, page, attempt, commit])
+        commit(response)
+      })
+      .catch((err: unknown) => {
+        if (controller.signal.aborted) return
+        // Drop from cache too, so a retry actually retries.
+        cache.current.delete(key)
+        setData(null)
+        setError(
+          err instanceof ApiError
+            ? err
+            : new ApiError(0, {
+                code: 'NETWORK_ERROR',
+                message: 'Could not reach the search service. Is the API running?',
+                details: [],
+              }),
+        )
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false)
+      })
+  }, [submitted, page, attempt, commit])
 
   useEffect(() => () => inFlight.current?.abort(), [])
 
   const updateForm = useCallback((patch: Partial<SearchFormState>) => {
-    historyMode.current = 'replace'
     setForm((prev) => ({ ...prev, ...patch }))
-    setPage(1)
   }, [])
 
+  const runSearch = useCallback(() => {
+    // New object even if unchanged, so a repeat Search click still re-fetches.
+    setSubmitted({ ...form })
+    setPage(1)
+  }, [form])
+
   const goToPage = useCallback((next: number) => {
-    historyMode.current = 'push'
     setPage(next)
   }, [])
 
   const reset = useCallback(() => {
-    historyMode.current = 'push'
     setForm(DEFAULT_FORM)
+    setSubmitted({ ...DEFAULT_FORM })
     setPage(1)
   }, [])
 
   const retry = useCallback(() => setAttempt((n) => n + 1), [])
 
-  return { form, page, data, loading, error, updateForm, goToPage, reset, retry }
+  return { form, page, data, loading, error, updateForm, runSearch, goToPage, reset, retry }
 }

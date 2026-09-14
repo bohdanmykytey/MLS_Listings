@@ -149,26 +149,53 @@ describe('empty and error states', () => {
 })
 
 describe('filtering', () => {
-  it('sends a typed keyword to the API', async () => {
+  const submit = () => userEvent.click(screen.getByRole('button', { name: /^search$/i }))
+
+  it('does not fetch while the user is still typing', async () => {
+    // The behaviour this replaced: a debounce fired a request a moment after
+    // each pause in typing, so a half-finished query kept hitting the API.
+    mockApi()
+    render(<App />)
+    await screen.findByText('123 Main St, Apt 4B')
+    const before = searchUrls.length
+
+    await userEvent.type(screen.getByLabelText(/keyword/i), 'kitchen')
+
+    expect(searchUrls.length).toBe(before)
+  })
+
+  it('sends a typed keyword to the API once Search is submitted', async () => {
     mockApi()
     render(<App />)
     await screen.findByText('123 Main St, Apt 4B')
     await userEvent.type(screen.getByLabelText(/keyword/i), 'garage')
+    await submit()
     await waitFor(() => expect(lastQuery().get('keyword')).toBe('garage'))
   })
 
-  it('omits a filter that the user cleared', async () => {
+  it('submits on Enter, not just on clicking Search', async () => {
+    mockApi()
+    render(<App />)
+    await screen.findByText('123 Main St, Apt 4B')
+    await userEvent.type(screen.getByLabelText(/keyword/i), 'garage{Enter}')
+    await waitFor(() => expect(lastQuery().get('keyword')).toBe('garage'))
+  })
+
+  it('omits a filter that the user cleared before submitting', async () => {
     mockApi()
     render(<App />)
     await screen.findByText('123 Main St, Apt 4B')
     const keyword = screen.getByLabelText(/keyword/i)
     await userEvent.type(keyword, 'pool')
+    await submit()
     await waitFor(() => expect(lastQuery().get('keyword')).toBe('pool'))
+
     await userEvent.clear(keyword)
+    await submit()
     await waitFor(() => expect(lastQuery().has('keyword')).toBe(false))
   })
 
-  it('resets to page 1 when a filter changes', async () => {
+  it('resets to page 1 when a new search is submitted', async () => {
     // The bug this guards: sitting on page 3, narrowing the filters, and
     // requesting page 3 of a result set that now has one page.
     mockApi()
@@ -179,41 +206,35 @@ describe('filtering', () => {
     await waitFor(() => expect(lastQuery().get('page')).toBe('3'))
 
     await userEvent.type(screen.getByLabelText(/keyword/i), 'x')
+    await submit()
     await waitFor(() => expect(lastQuery().get('page')).toBe('1'))
   })
 
-  it('restores defaults when reset is clicked', async () => {
+  it('restores defaults and searches immediately when Reset is clicked', async () => {
+    // Reset is itself a deliberate action, so — unlike a plain edit — it
+    // searches right away rather than waiting for another Search click.
     mockApi()
     render(<App />)
     await screen.findByText('123 Main St, Apt 4B')
     await userEvent.type(screen.getByLabelText(/keyword/i), 'garage')
+    await submit()
     await waitFor(() => expect(lastQuery().get('keyword')).toBe('garage'))
 
     await userEvent.click(screen.getByRole('button', { name: /^reset$/i }))
     await waitFor(() => expect(lastQuery().has('keyword')).toBe(false))
   })
 
-  it('sends dedupe only when the box is ticked', async () => {
+  it('sends dedupe only when the box is ticked and Search is submitted', async () => {
     mockApi()
     render(<App />)
     await screen.findByText('123 Main St, Apt 4B')
     expect(lastQuery().has('dedupe')).toBe(false)
 
     await userEvent.click(screen.getByRole('checkbox', { name: /merge duplicates/i }))
+    expect(lastQuery().has('dedupe')).toBe(false) // ticking alone must not fetch
+
+    await submit()
     await waitFor(() => expect(lastQuery().get('dedupe')).toBe('true'))
-  })
-
-  it('debounces typing into a single request', async () => {
-    mockApi()
-    render(<App />)
-    await screen.findByText('123 Main St, Apt 4B')
-    const before = searchUrls.length
-
-    await userEvent.type(screen.getByLabelText(/keyword/i), 'kitchen')
-    await waitFor(() => expect(lastQuery().get('keyword')).toBe('kitchen'))
-
-    // Seven keystrokes must not mean seven round trips.
-    expect(searchUrls.length - before).toBeLessThan(7)
   })
 })
 
@@ -251,14 +272,11 @@ describe('pagination', () => {
 })
 
 describe('result rows', () => {
-  it('shows the relevance score for each row once a filter is applied', async () => {
-    // Score is hidden on the default, unfiltered view (see the dedicated
-    // 'score column visibility' suite below), so this exercises the filtered
-    // case explicitly rather than relying on the default state.
+  it('shows the relevance score for each row, including on the default view', async () => {
+    // The brief lists relevance score as an always-shown minimum field
+    // alongside address, price, and bedrooms — no unfiltered-view carve-out.
     mockApi()
     render(<App />)
-    await screen.findByText('123 Main St, Apt 4B')
-    await userEvent.type(screen.getByLabelText(/keyword/i), 'condo')
     const row = (await screen.findByText('123 Main St, Apt 4B')).closest('tr')!
     expect(within(row).getByText('89.0')).toBeInTheDocument()
   })
@@ -282,11 +300,14 @@ describe('the address bar', () => {
     expect(url()).toBe('/')
   })
 
-  it('reflects a filter the user typed', async () => {
+  it('reflects a submitted filter, but not one still being typed', async () => {
     mockApi()
     render(<App />)
     await screen.findByText('123 Main St, Apt 4B')
     await userEvent.type(screen.getByLabelText(/keyword/i), 'pool')
+    expect(window.location.search).not.toContain('keyword')
+
+    await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
     await waitFor(() => expect(window.location.search).toContain('keyword=pool'))
   })
 
@@ -315,6 +336,7 @@ describe('the address bar', () => {
     const { unmount } = render(<App />)
     await screen.findByText('123 Main St, Apt 4B')
     await userEvent.type(screen.getByLabelText(/keyword/i), 'garage')
+    await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
     await waitFor(() => expect(window.location.search).toContain('keyword=garage'))
 
     unmount()            // a reload: the component tree is rebuilt from scratch
@@ -324,17 +346,18 @@ describe('the address bar', () => {
 })
 
 describe('history navigation', () => {
-  it('does not add a history entry per keystroke', async () => {
+  it('adds no history entries while typing, and exactly one on submit', async () => {
     mockApi()
     render(<App />)
     await screen.findByText('123 Main St, Apt 4B')
     const before = window.history.length
 
     await userEvent.type(screen.getByLabelText(/keyword/i), 'kitchen')
-    await waitFor(() => expect(window.location.search).toContain('keyword=kitchen'))
+    expect(window.history.length).toBe(before) // typing alone touches nothing
 
-    // Seven characters must not cost seven presses of the back button.
-    expect(window.history.length - before).toBeLessThan(7)
+    await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
+    await waitFor(() => expect(window.location.search).toContain('keyword=kitchen'))
+    expect(window.history.length).toBe(before + 1)
   })
 
   it('adds one history entry when the user changes page', async () => {
@@ -412,7 +435,7 @@ describe('caching', () => {
     expect(await screen.findByText('999 Changed Rd')).toBeInTheDocument()
   })
 
-  it('does not cache a failed request, so retry really retries', async () => {
+  it('does not cache a failed request, so resubmitting the same query retries it', async () => {
     let fail = true
     mockApi(() =>
       fail
@@ -422,8 +445,10 @@ describe('caching', () => {
     render(<App />)
     await screen.findByText(/check your filters/i)
 
+    // Same query, unedited — this only succeeds if the earlier failure was
+    // never written to the cache under that key.
     fail = false
-    await userEvent.type(screen.getByLabelText(/keyword/i), 'x')
+    await userEvent.click(screen.getByRole('button', { name: /^search$/i }))
     expect(await screen.findByText('123 Main St, Apt 4B')).toBeInTheDocument()
   })
 })

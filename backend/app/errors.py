@@ -1,14 +1,8 @@
 """One error shape for the whole API.
 
-FastAPI's defaults would hand the frontend three different bodies: 422 with a
-`detail` array for validation, 404 with a `detail` string for HTTPException,
-and an HTML-ish 500 otherwise. The UI would need three parsers. These handlers
-normalize everything to `ErrorEnvelope` so the frontend has exactly one
-error-rendering path.
-
-Validation failures are reported as **400**, not FastAPI's default 422: the
-handout frames these as bad requests ("minPrice greater than maxPrice"), and
-400 is what a client developer expects.
+Normalizes FastAPI's three failure shapes (422 validation, 404 HTTPException,
+raw 500) into one `ErrorEnvelope`. Validation failures report as 400, not
+422, matching how the brief frames bad input.
 """
 
 from __future__ import annotations
@@ -26,10 +20,7 @@ logger = logging.getLogger(__name__)
 
 
 def _envelope(status: int, code: str, message: str, details: list[ErrorDetail]) -> JSONResponse:
-    """Build the one error response shape this API ever returns.
-
-    Central so the handlers below cannot drift into emitting variants.
-    """
+    """The one error response shape this API ever returns."""
     return JSONResponse(
         status_code=status,
         content=ErrorEnvelope(
@@ -39,7 +30,7 @@ def _envelope(status: int, code: str, message: str, details: list[ErrorDetail]) 
 
 
 def _field_name(loc: tuple) -> str | None:
-    """Turn Pydantic's ("query", "page_size") location into "pageSize"."""
+    """Turn Pydantic's ("query", "page_size") into "pageSize"."""
     parts = [query_alias(str(p)) for p in loc if p not in ("query", "body", "path")]
     return ".".join(parts) or None
 
@@ -50,20 +41,11 @@ def _message(raw: str) -> str:
 
 
 def register_error_handlers(app: FastAPI) -> None:
-    """Install the handlers that normalize every failure into `ErrorEnvelope`.
-
-    Called once at app construction. Without it FastAPI emits three different
-    error shapes and the frontend would need three parsers.
-    """
+    """Install the handlers that normalize every failure into `ErrorEnvelope`."""
 
     @app.exception_handler(RequestValidationError)
     async def on_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
-        """Bad query parameters -> 400, listing every offending field.
-
-        Reported as 400 rather than FastAPI's default 422 because the brief
-        frames these as bad requests, and all problems are returned at once so
-        one round trip reveals everything the user must fix.
-        """
+        """Bad query parameters -> 400, listing every offending field at once."""
         details = [
             ErrorDetail(
                 field=_field_name(e.get("loc", ())),
@@ -88,12 +70,7 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def on_unexpected_error(_: Request, exc: Exception) -> JSONResponse:
-        """Last resort: an unhandled exception becomes a clean 500.
-
-        The brief asks that a clear error beat a crash. The cause is logged for
-        the operator; the client gets nothing that leaks internals.
-        """
-        # Log the cause, but never leak internals to the client.
+        """Last resort: log the cause, return a clean 500 with no internals leaked."""
         logger.exception("Unhandled error", exc_info=exc)
         return _envelope(
             500, "INTERNAL_ERROR", "An unexpected error occurred.", []

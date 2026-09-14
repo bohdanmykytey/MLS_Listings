@@ -1,9 +1,5 @@
-"""Wire contract for the listing search API.
-
-These models are the single source of truth for request/response shapes; the
-frontend's `src/api/types.ts` mirrors them by hand. Changing a field here means
-changing it there.
-"""
+"""Wire contract for the API. Single source of truth for request/response
+shapes; `frontend/src/api/types.ts` mirrors these fields by hand."""
 
 from __future__ import annotations
 
@@ -13,17 +9,13 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-# A listing's `id` is only unique per source, so every listing is addressed by
-# the composite "SOURCE:ID" throughout the API, the UI, and React list keys.
+# `id` is only unique per source, so listings are addressed by "SOURCE:ID"
+# everywhere: API, UI, React list keys.
 ListingKey = str
 
 
 def make_key(source: str, listing_id: str) -> ListingKey:
-    """Build the composite key used to address a listing everywhere.
-
-    Exists because `id` is unique per feed but not across feeds, so `id` alone
-    cannot identify a listing. One helper keeps the format in a single place.
-    """
+    """Build the composite key used to address a listing everywhere."""
     return f"{source}:{listing_id}"
 
 
@@ -54,31 +46,21 @@ class Listing(BaseModel):
     status: ListingStatus
     description: str
 
-    # Populated only when dedupe collapses a cluster: the keys this record
-    # absorbed. Empty on a raw feed record, which is why it defaults rather
-    # than being required.
+    # Set only when dedupe collapses a cluster: the keys this record absorbed.
     merged_from: list[ListingKey] = Field(
         default_factory=list, alias="mergedFrom", serialization_alias="mergedFrom"
     )
 
-    @computed_field  # serialized as part of the contract, not stored
+    @computed_field
     @property
     def key(self) -> ListingKey:
-        """The listing's stable identity, `SOURCE:ID`.
-
-        Computed rather than stored so it can never disagree with the fields it
-        derives from. Serialized because the client needs it for React keys and
-        for the `mergedFrom` references dedupe produces.
-        """
+        """Computed, not stored, so it can never disagree with source/id."""
         return make_key(self.source, self.id)
 
 
 class ScoreBreakdown(BaseModel):
-    """Why a listing scored what it did — surfaced so the UI can explain a rank.
-
-    Keeping the components separate (rather than returning one opaque number)
-    makes the scoring defensible in review and debuggable in tests.
-    """
+    """Score components kept separate, not one opaque number, so a rank is
+    auditable and testable."""
 
     model_config = ConfigDict(populate_by_name=True)
 
@@ -107,12 +89,8 @@ MAX_PAGE_SIZE = 100
 
 
 class SearchParams(BaseModel):
-    """Query parameters for /api/listings/search.
-
-    Bounds are declared on the fields so invalid input is rejected at the edge
-    with a 400 instead of silently producing wrong data. Cross-field rules that
-    Pydantic can't express per-field live in `check_ranges` below.
-    """
+    """Query parameters for /api/listings/search. Per-field bounds reject bad
+    input at the edge with a 400; cross-field rules live in `check_ranges`."""
 
     model_config = ConfigDict(populate_by_name=True, extra="forbid")
 
@@ -125,9 +103,7 @@ class SearchParams(BaseModel):
         float | None, Field(default=None, gt=0, alias="targetBudget")
     ]
 
-    # Status is filterable but unfiltered by default: the handout never asks to
-    # hide the one `pending` listing, so the baseline matches the spec exactly.
-    # Flipping the default to [ACTIVE] is a one-line change.
+    # Unfiltered by default — the handout never asks to hide `pending`.
     status: Annotated[list[ListingStatus] | None, Field(default=None)]
 
     dedupe: Annotated[bool, Field(default=False)]
@@ -139,12 +115,7 @@ class SearchParams(BaseModel):
 
     @model_validator(mode="after")
     def check_ranges(self) -> SearchParams:
-        """Reject filter combinations no single field can catch.
-
-        Per-field bounds are declared above; this covers the cross-field rule
-        the brief calls out by name, so `minPrice > maxPrice` fails at the edge
-        with a 400 instead of silently returning an empty result set.
-        """
+        """The one cross-field rule the brief calls out by name."""
         if (
             self.min_price is not None
             and self.max_price is not None
@@ -155,21 +126,13 @@ class SearchParams(BaseModel):
 
     @property
     def normalized_keyword(self) -> str | None:
-        """The keyword actually applied, or None when the box was blank.
-
-        A whitespace-only input must mean "no filter" rather than "match the
-        empty string", which would otherwise match every description.
-        """
+        """Blank/whitespace-only means unfiltered, not "match nothing"."""
         kw = (self.keyword or "").strip()
         return kw or None
 
     @property
     def normalized_city(self) -> str | None:
-        """The city actually applied, or None when the box was blank.
-
-        Same reasoning as `normalized_keyword`: blank means unfiltered, never
-        "match nothing".
-        """
+        """Blank/whitespace-only means unfiltered, not "match nothing"."""
         city = (self.city or "").strip()
         return city or None
 
@@ -188,8 +151,7 @@ class SearchResponse(BaseModel):
 
     items: list[ScoredListing]
     page_info: PageInfo = Field(alias="pageInfo", serialization_alias="pageInfo")
-    # Echoed back so the UI can prove what the server actually applied, and so
-    # a surprising result set is self-diagnosing.
+    # What the server actually applied, so a surprising result is self-diagnosing.
     applied: dict[str, object]
 
 
@@ -211,15 +173,8 @@ class ErrorEnvelope(BaseModel):
 
 
 def query_alias(field_name: str) -> str:
-    """Map an internal field name back to the alias clients actually send.
-
-    Exists so error responses speak the client's vocabulary.
-
-    Pydantic reports validation errors against the Python field name
-    (`page_size`), but the client sent `pageSize` and its form controls are
-    keyed by that. Translating here keeps the error envelope in the same
-    vocabulary as the request, so the UI can highlight the offending input.
-    """
+    """Map an internal field name back to the alias clients sent, so error
+    responses speak the client's vocabulary (`page_size` -> `pageSize`)."""
     field = SearchParams.model_fields.get(field_name)
     if field is not None and isinstance(field.alias, str):
         return field.alias

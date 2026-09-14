@@ -1,10 +1,5 @@
-"""Pagination over an already-sorted result set.
-
-Requesting a page past the end is not an error: it returns an empty page with
-an accurate `total`/`totalPages` so the UI can clamp and recover. Only
-structurally invalid input (page < 1, pageSize <= 0) is rejected, and that
-happens at the edge in `SearchParams`.
-"""
+"""Pagination over an already-sorted result set. A page past the end is an
+empty page with accurate totals, not an error."""
 
 from __future__ import annotations
 
@@ -17,13 +12,7 @@ T = TypeVar("T")
 
 
 def paginate(items: list[T], page: int, page_size: int) -> tuple[list[T], PageInfo]:
-    """Slice one page out of an ordered result set, with the totals to navigate.
-
-    Returns the page alongside `PageInfo` rather than just the rows, because the
-    UI needs `total` and `totalPages` to render "showing 6-10 of 12" and to know
-    which page buttons to offer. Generic over the item type, since paging has
-    nothing to do with listings.
-    """
+    """Slice one page out of an ordered list, with totals to navigate by."""
     total = len(items)
     total_pages = math.ceil(total / page_size) if total else 0
     start = (page - 1) * page_size

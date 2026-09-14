@@ -14,10 +14,8 @@ from .api import get_repository, router
 from .errors import register_error_handlers
 from .repository import InMemoryListingRepository
 
-# Vite's dev server (3000) and its preview server for built output (4173).
-# Both normally reach the API through Vite's proxy, so these only matter for a
-# direct browser call — but listing them turns a confusing CORS failure into a
-# working request. Narrow rather than "*" so the allowed origins stay explicit.
+# Vite dev (3000) and preview (4173). Requests normally go through Vite's
+# proxy; these only matter for a direct browser call.
 ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://127.0.0.1:3000",
@@ -27,11 +25,7 @@ ALLOWED_ORIGINS = [
 
 
 def create_app() -> FastAPI:
-    """Build and wire the application.
-
-    A factory rather than a module-level singleton so tests can construct an
-    isolated app with their own repository instead of sharing one global.
-    """
+    """Factory, not a module-level singleton, so tests get an isolated app."""
     app = FastAPI(
         title="Listing Search Service",
         version="1.0.0",
@@ -41,15 +35,14 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=ALLOWED_ORIGINS,
-        # The API is read-only, so GET is the only method that exists to allow.
-        allow_methods=["GET"],
+        allow_methods=["GET"],  # read-only API
         allow_headers=["Content-Type"],
     )
 
     register_error_handlers(app)
     app.include_router(router, prefix="/api")
 
-    # The single place the concrete data source is chosen.
+    # The one place the concrete data source is chosen.
     repository = InMemoryListingRepository.from_json_file()
     app.dependency_overrides[get_repository] = lambda: repository
 
