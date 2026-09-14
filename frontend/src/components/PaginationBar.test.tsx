@@ -29,7 +29,8 @@ describe('PaginationBar', () => {
   it('uses the singular for exactly one result', () => {
     const info = makePageInfo({ total: 1, totalPages: 1 })
     render(<PaginationBar pageInfo={info} onChange={vi.fn()} />)
-    expect(screen.getByText(/of 1 listing$/)).toBeInTheDocument()
+    expect(screen.getByText(/of 1 listing\b/)).toBeInTheDocument()
+    expect(screen.queryByText(/of 1 listings/)).not.toBeInTheDocument()
   })
 
   it('hides the pager when everything fits on one page', () => {

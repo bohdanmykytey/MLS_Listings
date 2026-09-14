@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
@@ -19,6 +19,11 @@ ListingKey = str
 
 
 def make_key(source: str, listing_id: str) -> ListingKey:
+    """Build the composite key used to address a listing everywhere.
+
+    Exists because `id` is unique per feed but not across feeds, so `id` alone
+    cannot identify a listing. One helper keeps the format in a single place.
+    """
     return f"{source}:{listing_id}"
 
 
@@ -49,9 +54,22 @@ class Listing(BaseModel):
     status: ListingStatus
     description: str
 
+    # Populated only when dedupe collapses a cluster: the keys this record
+    # absorbed. Empty on a raw feed record, which is why it defaults rather
+    # than being required.
+    merged_from: list[ListingKey] = Field(
+        default_factory=list, alias="mergedFrom", serialization_alias="mergedFrom"
+    )
+
     @computed_field  # serialized as part of the contract, not stored
     @property
     def key(self) -> ListingKey:
+        """The listing's stable identity, `SOURCE:ID`.
+
+        Computed rather than stored so it can never disagree with the fields it
+        derives from. Serialized because the client needs it for React keys and
+        for the `mergedFrom` references dedupe produces.
+        """
         return make_key(self.source, self.id)
 
 
@@ -65,9 +83,11 @@ class ScoreBreakdown(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     budget_fit: float = Field(alias="budgetFit", serialization_alias="budgetFit")
-    recency: float
+    negotiability: float
     budget_weight: float = Field(alias="budgetWeight", serialization_alias="budgetWeight")
-    recency_weight: float = Field(alias="recencyWeight", serialization_alias="recencyWeight")
+    negotiability_weight: float = Field(
+        alias="negotiabilityWeight", serialization_alias="negotiabilityWeight"
+    )
 
 
 class ScoredListing(Listing):
@@ -81,13 +101,7 @@ class ScoredListing(Listing):
     score_breakdown: ScoreBreakdown = Field(
         alias="scoreBreakdown", serialization_alias="scoreBreakdown"
     )
-    # Populated only when dedupe is on: the other keys this record absorbed.
-    merged_from: list[ListingKey] = Field(
-        default_factory=list, alias="mergedFrom", serialization_alias="mergedFrom"
-    )
 
-
-SortOption = Literal["relevance", "priceAsc", "priceDesc", "newest"]
 
 MAX_PAGE_SIZE = 100
 
@@ -117,7 +131,6 @@ class SearchParams(BaseModel):
     status: Annotated[list[ListingStatus] | None, Field(default=None)]
 
     dedupe: Annotated[bool, Field(default=False)]
-    sort: Annotated[SortOption, Field(default="relevance")]
 
     page: Annotated[int, Field(default=1, ge=1)]
     page_size: Annotated[
@@ -126,6 +139,12 @@ class SearchParams(BaseModel):
 
     @model_validator(mode="after")
     def check_ranges(self) -> SearchParams:
+        """Reject filter combinations no single field can catch.
+
+        Per-field bounds are declared above; this covers the cross-field rule
+        the brief calls out by name, so `minPrice > maxPrice` fails at the edge
+        with a 400 instead of silently returning an empty result set.
+        """
         if (
             self.min_price is not None
             and self.max_price is not None
@@ -136,11 +155,21 @@ class SearchParams(BaseModel):
 
     @property
     def normalized_keyword(self) -> str | None:
+        """The keyword actually applied, or None when the box was blank.
+
+        A whitespace-only input must mean "no filter" rather than "match the
+        empty string", which would otherwise match every description.
+        """
         kw = (self.keyword or "").strip()
         return kw or None
 
     @property
     def normalized_city(self) -> str | None:
+        """The city actually applied, or None when the box was blank.
+
+        Same reasoning as `normalized_keyword`: blank means unfiltered, never
+        "match nothing".
+        """
         city = (self.city or "").strip()
         return city or None
 
@@ -183,6 +212,8 @@ class ErrorEnvelope(BaseModel):
 
 def query_alias(field_name: str) -> str:
     """Map an internal field name back to the alias clients actually send.
+
+    Exists so error responses speak the client's vocabulary.
 
     Pydantic reports validation errors against the Python field name
     (`page_size`), but the client sent `pageSize` and its form controls are

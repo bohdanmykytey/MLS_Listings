@@ -27,6 +27,11 @@ ALLOWED_ORIGINS = [
 
 
 def create_app() -> FastAPI:
+    """Build and wire the application.
+
+    A factory rather than a module-level singleton so tests can construct an
+    isolated app with their own repository instead of sharing one global.
+    """
     app = FastAPI(
         title="Listing Search Service",
         version="1.0.0",
@@ -36,7 +41,8 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=ALLOWED_ORIGINS,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        # The API is read-only, so GET is the only method that exists to allow.
+        allow_methods=["GET"],
         allow_headers=["Content-Type"],
     )
 

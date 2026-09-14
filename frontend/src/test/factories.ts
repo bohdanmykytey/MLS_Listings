@@ -27,7 +27,7 @@ export function makeListing(overrides: Partial<ScoredListing> = {}): ScoredListi
     status: 'active',
     description: 'Bright top-floor condo near shops and transit.',
     relevanceScore: 88.95,
-    scoreBreakdown: { budgetFit: 1, recency: 0.72, budgetWeight: 0.6, recencyWeight: 0.4 },
+    scoreBreakdown: { budgetFit: 1, negotiability: 0.24, budgetWeight: 0.6, negotiabilityWeight: 0.4 },
     mergedFrom: [],
     ...overrides,
   }

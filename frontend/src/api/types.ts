@@ -8,13 +8,12 @@
 
 export type ListingStatus = 'active' | 'pending' | 'sold'
 
-export type SortOption = 'relevance' | 'priceAsc' | 'priceDesc' | 'newest'
-
 export interface ScoreBreakdown {
   budgetFit: number
-  recency: number
+  /** Buyer leverage from time on market: 0 when fresh, 1 once capped. */
+  negotiability: number
   budgetWeight: number
-  recencyWeight: number
+  negotiabilityWeight: number
 }
 
 export interface ScoredListing {
@@ -66,7 +65,6 @@ export interface SearchFormState {
   keyword: string
   targetBudget: string
   dedupe: boolean
-  sort: SortOption
   pageSize: string
 }
 

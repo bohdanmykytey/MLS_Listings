@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 
 
 def _envelope(status: int, code: str, message: str, details: list[ErrorDetail]) -> JSONResponse:
+    """Build the one error response shape this API ever returns.
+
+    Central so the handlers below cannot drift into emitting variants.
+    """
     return JSONResponse(
         status_code=status,
         content=ErrorEnvelope(
@@ -46,8 +50,20 @@ def _message(raw: str) -> str:
 
 
 def register_error_handlers(app: FastAPI) -> None:
+    """Install the handlers that normalize every failure into `ErrorEnvelope`.
+
+    Called once at app construction. Without it FastAPI emits three different
+    error shapes and the frontend would need three parsers.
+    """
+
     @app.exception_handler(RequestValidationError)
     async def on_validation_error(_: Request, exc: RequestValidationError) -> JSONResponse:
+        """Bad query parameters -> 400, listing every offending field.
+
+        Reported as 400 rather than FastAPI's default 422 because the brief
+        frames these as bad requests, and all problems are returned at once so
+        one round trip reveals everything the user must fix.
+        """
         details = [
             ErrorDetail(
                 field=_field_name(e.get("loc", ())),
@@ -61,7 +77,8 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StarletteHTTPException)
     async def on_http_error(_: Request, exc: StarletteHTTPException) -> JSONResponse:
-        codes = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED", 409: "CONFLICT"}
+        """Re-wrap deliberate HTTP errors (404, 405) in the shared envelope."""
+        codes = {404: "NOT_FOUND", 405: "METHOD_NOT_ALLOWED"}
         return _envelope(
             exc.status_code,
             codes.get(exc.status_code, "HTTP_ERROR"),
@@ -71,6 +88,11 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(Exception)
     async def on_unexpected_error(_: Request, exc: Exception) -> JSONResponse:
+        """Last resort: an unhandled exception becomes a clean 500.
+
+        The brief asks that a clear error beat a crash. The cause is logged for
+        the operator; the client gets nothing that leaks internals.
+        """
         # Log the cause, but never leak internals to the client.
         logger.exception("Unhandled error", exc_info=exc)
         return _envelope(

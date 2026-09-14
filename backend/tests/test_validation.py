@@ -41,7 +41,6 @@ class TestRejectedRequests:
             ({"minPrice": "cheap"}, "minPrice"),                  # unparseable
             ({"page": "two"}, "page"),
             ({"status": "bogus"}, "status.0"),
-            ({"sort": "sideways"}, "sort"),
             ({"colour": "blue"}, "colour"),                       # unknown param
         ],
     )
@@ -94,7 +93,6 @@ class TestAcceptedRequests:
             {"dedupe": "true"},
             {"dedupe": "false"},
             {"status": "active"},
-            {"sort": "priceAsc"},
         ],
     )
     def test_valid_input_is_accepted(self, client: TestClient, params: dict) -> None:

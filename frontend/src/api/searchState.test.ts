@@ -8,7 +8,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { DEFAULT_FORM, buildSearchParams, parseSearchState } from './searchState'
+import { DEFAULT_FORM, buildSearchParams, hasActiveFilters, parseSearchState } from './searchState'
 import type { SearchFormState } from './types'
 
 describe('buildSearchParams', () => {
@@ -19,11 +19,10 @@ describe('buildSearchParams', () => {
     }
   })
 
-  it('always sends page, pageSize and sort', () => {
+  it('always sends page and pageSize', () => {
     const params = buildSearchParams(DEFAULT_FORM, 3)
     expect(params.get('page')).toBe('3')
     expect(params.get('pageSize')).toBe('5')
-    expect(params.get('sort')).toBe('relevance')
   })
 
   it('trims whitespace and includes real values', () => {
@@ -61,7 +60,7 @@ describe('parseSearchState', () => {
   it('restores every filter from a shared link', () => {
     const { form, page } = parseSearchState(
       '?minPrice=400000&maxPrice=600000&minBedrooms=3&city=Reston&keyword=pool' +
-        '&targetBudget=500000&sort=priceAsc&dedupe=true&page=2&pageSize=10',
+        '&targetBudget=500000&dedupe=true&page=2&pageSize=10',
     )
     expect(form).toEqual({
       minPrice: '400000',
@@ -70,7 +69,6 @@ describe('parseSearchState', () => {
       city: 'Reston',
       keyword: 'pool',
       targetBudget: '500000',
-      sort: 'priceAsc',
       dedupe: true,
       pageSize: '10',
     })
@@ -87,11 +85,6 @@ describe('parseSearchState', () => {
     const { form } = parseSearchState('?minPrice=abc&pageSize=0')
     expect(form.minPrice).toBe('abc')
     expect(form.pageSize).toBe('0')
-  })
-
-  it('falls back to the default sort when the value is not a real option', () => {
-    // Unlike a text field, a <select> cannot render an unknown value.
-    expect(parseSearchState('?sort=sideways').form.sort).toBe('relevance')
   })
 
   it.each(['0', '-3', 'two', '1.5', ''])('treats page=%s as page 1', (value) => {
@@ -113,7 +106,6 @@ describe('round trip', () => {
       city: 'Reston',
       keyword: 'pool',
       targetBudget: '500000',
-      sort: 'newest',
       dedupe: true,
       pageSize: '25',
     }, 4],
@@ -130,5 +122,34 @@ describe('round trip', () => {
     const messy = { ...DEFAULT_FORM, city: '  Reston  ' }
     const parsed = parseSearchState(`?${buildSearchParams(messy, 1).toString()}`)
     expect(parsed.form.city).toBe('Reston')
+  })
+})
+
+describe('hasActiveFilters', () => {
+  it('is false for the default, untouched form', () => {
+    expect(hasActiveFilters(DEFAULT_FORM)).toBe(false)
+  })
+
+  it('ignores pageSize — a display preference, not a filter', () => {
+    expect(hasActiveFilters({ ...DEFAULT_FORM, pageSize: '25' })).toBe(false)
+  })
+
+  it('is false for whitespace-only text, same as buildSearchParams', () => {
+    expect(hasActiveFilters({ ...DEFAULT_FORM, city: '   ', keyword: '  ' })).toBe(false)
+  })
+
+  it.each([
+    ['minPrice', '400000'],
+    ['maxPrice', '600000'],
+    ['minBedrooms', '3'],
+    ['city', 'Reston'],
+    ['keyword', 'garage'],
+    ['targetBudget', '500000'],
+  ] as const)('is true once %s is set', (field, value) => {
+    expect(hasActiveFilters({ ...DEFAULT_FORM, [field]: value })).toBe(true)
+  })
+
+  it('is true once dedupe is enabled, even with no other filter set', () => {
+    expect(hasActiveFilters({ ...DEFAULT_FORM, dedupe: true })).toBe(true)
   })
 })

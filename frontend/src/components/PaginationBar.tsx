@@ -28,6 +28,7 @@ export function PaginationBar({ pageInfo, onChange }: Props) {
     >
       <Typography variant="body2" color="text.secondary">
         Showing {first}–{last} of {total} {total === 1 ? 'listing' : 'listings'}
+        {total > 0 && ' · ranked by relevance; column sorting reorders this page only'}
       </Typography>
       {totalPages > 1 && (
         <Pagination

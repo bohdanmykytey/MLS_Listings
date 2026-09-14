@@ -39,6 +39,11 @@ def within_radius(
     center_lng: float,
     radius_miles: float,
 ) -> bool:
+    """Is a listing inside the search radius? Boundary is inclusive.
+
+    The predicate a radius filter would call, kept next to the distance maths
+    so wiring one up later is a parameter change rather than new logic.
+    """
     return (
         haversine_miles(listing_lat, listing_lng, center_lat, center_lng) <= radius_miles
     )

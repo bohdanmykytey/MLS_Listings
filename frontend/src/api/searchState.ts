@@ -12,13 +12,13 @@
  *    The server owns validation, so `?minPrice=abc` should reach it and come
  *    back as a 400 the user can see — not be silently dropped here, which
  *    would show results that don't match the URL.
- *  - `sort` and `dedupe` map to a dropdown and a checkbox that cannot render
- *    an invalid value, so an unrecognized one falls back to the default.
+ *  - `dedupe` maps to a checkbox, which cannot render an invalid value, so
+ *    anything other than "true" reads as off.
  *  - `page` must be a positive integer to be usable as a number; anything
  *    else means page 1.
  */
 
-import type { SearchFormState, SortOption } from './types'
+import type { SearchFormState } from './types'
 
 export const DEFAULT_FORM: SearchFormState = {
   minPrice: '',
@@ -28,16 +28,8 @@ export const DEFAULT_FORM: SearchFormState = {
   keyword: '',
   targetBudget: '',
   dedupe: false,
-  sort: 'relevance',
   pageSize: '5',
 }
-
-const SORT_OPTIONS: readonly SortOption[] = [
-  'relevance',
-  'priceAsc',
-  'priceDesc',
-  'newest',
-] as const
 
 /** Filters that are plain text on the wire and in the form. */
 const TEXT_FIELDS = [
@@ -48,6 +40,24 @@ const TEXT_FIELDS = [
   'keyword',
   'targetBudget',
 ] as const satisfies readonly (keyof SearchFormState)[]
+
+/**
+ * Has the user specified any actual search criteria?
+ *
+ * Built on `buildSearchParams` rather than a second, hand-written definition
+ * of "empty" — the two would inevitably drift, and this one is intentionally
+ * scoped to filters: `page` and `pageSize` are navigation and a display
+ * preference, not search criteria, so paging or resizing the page never flips
+ * this from false to true.
+ *
+ * Used to decide whether a relevance score means anything to show. With no
+ * criteria entered, every listing scores on time-on-market alone, and
+ * surfacing a number for a ranking nobody asked for reads as noise.
+ */
+export function hasActiveFilters(form: SearchFormState): boolean {
+  const params = buildSearchParams(form, 1)
+  return TEXT_FIELDS.some((name) => params.has(name)) || form.dedupe
+}
 
 export function buildSearchParams(form: SearchFormState, page: number): URLSearchParams {
   const params = new URLSearchParams()
@@ -60,7 +70,6 @@ export function buildSearchParams(form: SearchFormState, page: number): URLSearc
     if (trimmed !== '') params.set(name, trimmed)
   }
 
-  params.set('sort', form.sort)
   if (form.dedupe) params.set('dedupe', 'true')
   params.set('page', String(page))
   if (form.pageSize.trim() !== '') params.set('pageSize', form.pageSize.trim())
@@ -85,11 +94,6 @@ export function parseSearchState(search: string): ParsedSearchState {
 
   const pageSize = params.get('pageSize')
   if (pageSize !== null) form.pageSize = pageSize
-
-  const sort = params.get('sort')
-  if (sort !== null && (SORT_OPTIONS as readonly string[]).includes(sort)) {
-    form.sort = sort as SortOption
-  }
 
   form.dedupe = params.get('dedupe') === 'true'
 

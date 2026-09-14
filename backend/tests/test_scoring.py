@@ -13,13 +13,12 @@ from datetime import date
 import pytest
 
 from app.scoring import (
-    BUDGET_CUTOFF,
-    BUDGET_TOLERANCE,
+    BUDGET_HALF_DEVIATION,
     BUDGET_WEIGHT,
-    RECENCY_HALF_LIFE_DAYS,
-    RECENCY_WEIGHT,
+    NEGOTIABILITY_WEIGHT,
+    NEGOTIABILITY_WINDOW_DAYS,
     budget_fit,
-    recency,
+    negotiability,
     score_listing,
     sort_key_relevance,
 )
@@ -32,29 +31,29 @@ class TestBudgetFit:
     def test_exact_target_is_a_perfect_fit(self) -> None:
         assert budget_fit(TARGET, TARGET) == 1.0
 
-    @pytest.mark.parametrize("price", [475_000, 500_000, 525_000])
-    def test_anything_inside_the_tolerance_band_is_a_perfect_fit(self, price: float) -> None:
-        # +/-5% of 500k is 475k-525k.
-        assert budget_fit(price, TARGET) == 1.0
+    def test_one_half_deviation_halves_the_fit(self) -> None:
+        """The formula in one assertion: 5% off target costs half the score."""
+        assert budget_fit(TARGET * (1 + BUDGET_HALF_DEVIATION), TARGET) == pytest.approx(0.5)
 
-    def test_tolerance_edge_is_inclusive(self) -> None:
-        edge = TARGET * (1 + BUDGET_TOLERANCE)
-        assert budget_fit(edge, TARGET) == 1.0
+    def test_two_half_deviations_quarter_the_fit(self) -> None:
+        assert budget_fit(TARGET * 1.10, TARGET) == pytest.approx(0.25)
 
-    @pytest.mark.parametrize("price", [250_000, 750_000])
-    def test_fit_is_zero_at_and_beyond_the_cutoff(self, price: float) -> None:
-        # +/-50% of 500k is 250k / 750k.
-        assert budget_fit(price, TARGET) == 0.0
+    def test_small_price_differences_are_visible(self) -> None:
+        """The reason the old tolerance band was removed.
 
-    def test_fit_never_goes_negative_however_far_off(self) -> None:
-        assert budget_fit(50_000_000, TARGET) == 0.0
+        $465k and $470k against a $450k budget both sat inside the former
+        +/-5% plateau and scored an identical 1.0, so the closer listing could
+        not outrank the further one. Any price difference must now register.
+        """
+        closer = budget_fit(465_000, 450_000)
+        further = budget_fit(470_000, 450_000)
+        assert closer > further
 
     def test_penalty_is_symmetric_around_the_target(self) -> None:
         """A home 30% under budget fits exactly as well as one 30% over.
 
-        This is the deliberate design call: buyers shop a band, not a ceiling,
-        so being far under target is also a poor match. Rewarding anything
-        cheaper would rank a studio above the house the user actually wants.
+        Buyers shop a band, not a ceiling. Rewarding anything cheaper would
+        rank a studio above the house the user actually wants.
         """
         under = budget_fit(TARGET * 0.70, TARGET)
         over = budget_fit(TARGET * 1.30, TARGET)
@@ -62,13 +61,15 @@ class TestBudgetFit:
         assert 0.0 < under < 1.0
 
     def test_fit_decays_monotonically_as_price_moves_away(self) -> None:
-        deviations = [0.10, 0.20, 0.30, 0.40]
-        fits = [budget_fit(TARGET * (1 + d), TARGET) for d in deviations]
+        fits = [budget_fit(TARGET * (1 + d), TARGET) for d in (0.02, 0.10, 0.25, 0.50)]
         assert fits == sorted(fits, reverse=True)
 
-    def test_decay_is_linear_between_tolerance_and_cutoff(self) -> None:
-        midpoint = (BUDGET_TOLERANCE + BUDGET_CUTOFF) / 2
-        assert budget_fit(TARGET * (1 + midpoint), TARGET) == pytest.approx(0.5)
+    def test_fit_stays_within_bounds_however_far_off(self) -> None:
+        """Asymptotic, never clamped — so distant listings still order against
+        each other rather than all collapsing to a shared 0.0."""
+        far = budget_fit(50_000_000, TARGET)
+        nearer = budget_fit(5_000_000, TARGET)
+        assert 0.0 <= far < nearer < 1.0
 
     @pytest.mark.parametrize("target", [None, 0.0, -1.0])
     def test_missing_or_nonsensical_target_yields_no_fit(self, target: float | None) -> None:
@@ -77,42 +78,62 @@ class TestBudgetFit:
         assert budget_fit(400_000, target) == 0.0
 
 
-class TestRecency:
-    def test_listed_today_scores_one(self) -> None:
-        assert recency(TODAY, TODAY) == 1.0
+class TestNegotiability:
+    """Time on market as buyer leverage, not as decay.
 
-    def test_one_half_life_scores_exactly_one_half(self) -> None:
-        older = date.fromordinal(TODAY.toordinal() - int(RECENCY_HALF_LIFE_DAYS))
-        assert recency(older, TODAY) == pytest.approx(0.5)
+    Deliberately inverted relative to a conventional "newest first" ranking:
+    freshness serves the seller, leverage serves the buyer, and this is a
+    buyer's search.
+    """
 
-    def test_two_half_lives_score_one_quarter(self) -> None:
-        older = date.fromordinal(TODAY.toordinal() - int(RECENCY_HALF_LIFE_DAYS * 2))
-        assert recency(older, TODAY) == pytest.approx(0.25)
+    def test_a_listing_posted_today_has_no_leverage_yet(self) -> None:
+        assert negotiability(TODAY, TODAY) == 0.0
 
-    def test_future_dated_listing_clamps_to_one_rather_than_exceeding_it(self) -> None:
-        """Feed clock skew must not produce a score above 100."""
+    def test_leverage_accrues_linearly_across_the_window(self) -> None:
+        quarter = date.fromordinal(TODAY.toordinal() - int(NEGOTIABILITY_WINDOW_DAYS / 4))
+        half = date.fromordinal(TODAY.toordinal() - int(NEGOTIABILITY_WINDOW_DAYS / 2))
+        assert negotiability(quarter, TODAY) == pytest.approx(0.25)
+        assert negotiability(half, TODAY) == pytest.approx(0.5)
+
+    def test_leverage_maxes_out_at_the_window(self) -> None:
+        full = date.fromordinal(TODAY.toordinal() - int(NEGOTIABILITY_WINDOW_DAYS))
+        assert negotiability(full, TODAY) == 1.0
+
+    def test_leverage_is_capped_not_unbounded(self) -> None:
+        """Past the window, extra days say more about a problem with the
+        property than about a motivated seller, so they earn no more credit."""
+        capped = date.fromordinal(TODAY.toordinal() - int(NEGOTIABILITY_WINDOW_DAYS))
+        ancient = date.fromordinal(TODAY.toordinal() - 3650)
+        assert negotiability(ancient, TODAY) == negotiability(capped, TODAY) == 1.0
+
+    def test_older_listings_always_score_at_least_as_well(self) -> None:
+        scores = [
+            negotiability(date.fromordinal(TODAY.toordinal() - age), TODAY)
+            for age in (0, 30, 60, 120, 365)
+        ]
+        assert scores == sorted(scores)
+
+    def test_future_dated_listing_has_no_leverage_rather_than_negative(self) -> None:
+        """Feed clock skew must not produce a score below zero."""
         future = date.fromordinal(TODAY.toordinal() + 30)
-        assert recency(future, TODAY) == 1.0
+        assert negotiability(future, TODAY) == 0.0
 
-    def test_recency_is_always_within_bounds(self) -> None:
-        for age in (0, 1, 30, 365, 10_000):
-            value = recency(date.fromordinal(TODAY.toordinal() - age), TODAY)
+    def test_value_is_always_within_bounds(self) -> None:
+        for age in (-30, 0, 1, 120, 10_000):
+            value = negotiability(date.fromordinal(TODAY.toordinal() - age), TODAY)
             assert 0.0 <= value <= 1.0
-
-    def test_recency_decays_monotonically_with_age(self) -> None:
-        scores = [recency(date.fromordinal(TODAY.toordinal() - a), TODAY) for a in (0, 10, 20, 30)]
-        assert scores == sorted(scores, reverse=True)
 
 
 class TestScoreListing:
     def test_perfect_listing_scores_one_hundred(self, make_listing) -> None:
-        listing = make_listing(price=TARGET, listed_date=TODAY.isoformat())
+        """On budget to the dollar, and on the market long enough to negotiate."""
+        capped = date.fromordinal(TODAY.toordinal() - int(NEGOTIABILITY_WINDOW_DAYS))
+        listing = make_listing(price=TARGET, listed_date=capped.isoformat())
         assert score_listing(listing, TARGET, TODAY).relevance_score == 100.0
 
     def test_worst_listing_scores_zero(self, make_listing) -> None:
-        """Beyond the budget cutoff and old enough for recency to vanish."""
-        ancient = date.fromordinal(TODAY.toordinal() - 3650).isoformat()
-        listing = make_listing(price=TARGET * 5, listed_date=ancient)
+        """Far outside budget and posted today: no price match, no leverage."""
+        listing = make_listing(price=TARGET * 5, listed_date=TODAY.isoformat())
         assert score_listing(listing, TARGET, TODAY).relevance_score == 0.0
 
     def test_score_always_lands_between_zero_and_one_hundred(self, make_listing) -> None:
@@ -125,37 +146,42 @@ class TestScoreListing:
                 assert 0.0 <= score_listing(listing, TARGET, TODAY).relevance_score <= 100.0
 
     def test_weights_are_applied_as_documented(self, make_listing) -> None:
-        # Perfect fit, exactly one half-life old -> 100*(0.6*1 + 0.4*0.5).
-        older = date.fromordinal(TODAY.toordinal() - int(RECENCY_HALF_LIFE_DAYS))
-        listing = make_listing(price=TARGET, listed_date=older.isoformat())
-        expected = 100 * (BUDGET_WEIGHT * 1.0 + RECENCY_WEIGHT * 0.5)
+        # Perfect fit, halfway through the negotiating window.
+        halfway = date.fromordinal(TODAY.toordinal() - int(NEGOTIABILITY_WINDOW_DAYS / 2))
+        listing = make_listing(price=TARGET, listed_date=halfway.isoformat())
+        expected = 100 * (BUDGET_WEIGHT * 1.0 + NEGOTIABILITY_WEIGHT * 0.5)
         assert score_listing(listing, TARGET, TODAY).relevance_score == pytest.approx(expected)
 
     def test_breakdown_explains_the_score(self, make_listing) -> None:
         listing = make_listing(price=TARGET, listed_date=TODAY.isoformat())
         scored = score_listing(listing, TARGET, TODAY)
         b = scored.score_breakdown
-        recomputed = 100 * (b.budget_weight * b.budget_fit + b.recency_weight * b.recency)
+        recomputed = 100 * (
+            b.budget_weight * b.budget_fit + b.negotiability_weight * b.negotiability
+        )
         assert recomputed == pytest.approx(scored.relevance_score, abs=0.01)
 
 
 class TestNoTargetBudget:
     """Without a budget the score must stay on the same 0-100 scale."""
 
-    def test_weights_renormalize_so_recency_carries_everything(self, make_listing) -> None:
-        listing = make_listing(listed_date=TODAY.isoformat())
+    def test_weights_renormalize_so_negotiability_carries_everything(
+        self, make_listing
+    ) -> None:
+        listing = make_listing()
         scored = score_listing(listing, None, TODAY)
         assert scored.score_breakdown.budget_weight == 0.0
-        assert scored.score_breakdown.recency_weight == 1.0
+        assert scored.score_breakdown.negotiability_weight == 1.0
 
-    def test_newest_listing_still_reaches_one_hundred(self, make_listing) -> None:
-        # Without renormalization this would cap at 40 (the recency weight).
-        listing = make_listing(listed_date=TODAY.isoformat())
+    def test_most_negotiable_listing_still_reaches_one_hundred(self, make_listing) -> None:
+        # Without renormalization this would cap at 40 (the negotiability weight).
+        capped = date.fromordinal(TODAY.toordinal() - int(NEGOTIABILITY_WINDOW_DAYS))
+        listing = make_listing(listed_date=capped.isoformat())
         assert score_listing(listing, None, TODAY).relevance_score == 100.0
 
     def test_price_is_irrelevant_when_no_budget_is_given(self, make_listing) -> None:
-        cheap = make_listing("C", price=100_000, listed_date=TODAY.isoformat())
-        dear = make_listing("D", price=9_000_000, listed_date=TODAY.isoformat())
+        cheap = make_listing("C", price=100_000)
+        dear = make_listing("D", price=9_000_000)
         a = score_listing(cheap, None, TODAY).relevance_score
         b = score_listing(dear, None, TODAY).relevance_score
         assert a == b
@@ -176,19 +202,19 @@ class TestTieBreaking:
 
     def test_real_query_on_sample_data_produces_a_tie(self, sample_listings) -> None:
         """No fixtures: this is a query a user could actually run."""
-        scored = [score_listing(l, 418_000.0, TODAY) for l in sample_listings]
+        scored = [score_listing(l, 398_100.0, TODAY) for l in sample_listings]
         by_key = {s.key: s for s in scored}
-        assert by_key["MLS_B:B7"].relevance_score == by_key["MLS_A:A5"].relevance_score
+        assert by_key["MLS_A:A1"].relevance_score == by_key["MLS_B:B7"].relevance_score
 
     def test_a_real_tie_is_ordered_deterministically(self, sample_listings) -> None:
         """Both tied listings are returned and both keep their score; only
-        their relative order is decided. A5 is newer, so it ranks first."""
+        their relative order is decided. B7 has sat longer, so it ranks first."""
         scored = sorted(
-            (score_listing(l, 418_000.0, TODAY) for l in sample_listings),
+            (score_listing(l, 398_100.0, TODAY) for l in sample_listings),
             key=sort_key_relevance,
         )
         keys = [s.key for s in scored]
-        assert keys.index("MLS_A:A5") < keys.index("MLS_B:B7")
+        assert keys.index("MLS_B:B7") < keys.index("MLS_A:A1")
 
     def test_a_real_tie_survives_input_reordering(self, sample_listings) -> None:
         """The property that matters: the output order must come from the data,
@@ -196,14 +222,14 @@ class TestTieBreaking:
         forward = [
             s.key
             for s in sorted(
-                (score_listing(l, 418_000.0, TODAY) for l in sample_listings),
+                (score_listing(l, 398_100.0, TODAY) for l in sample_listings),
                 key=sort_key_relevance,
             )
         ]
         backward = [
             s.key
             for s in sorted(
-                (score_listing(l, 418_000.0, TODAY) for l in reversed(sample_listings)),
+                (score_listing(l, 398_100.0, TODAY) for l in reversed(sample_listings)),
                 key=sort_key_relevance,
             )
         ]
@@ -214,11 +240,19 @@ class TestTieBreaking:
         b = score_listing(make_listing("B", price=TARGET), TARGET, TODAY)
         assert a.relevance_score == b.relevance_score
 
-    def test_tie_breaks_on_recency_first(self, make_listing) -> None:
-        # Both sit inside the tolerance band, so budget_fit ties at 1.0.
-        older = score_listing(make_listing("O", price=490_000, listed_date="2026-09-01"), TARGET, TODAY)
-        newer = score_listing(make_listing("N", price=510_000, listed_date="2026-09-05"), TARGET, TODAY)
-        assert sorted([older, newer], key=sort_key_relevance)[0].key == newer.key
+    def test_tie_breaks_on_time_on_market_first(self, make_listing) -> None:
+        """Equal scores: the listing that has sat longer is the better prospect,
+        matching the direction of the negotiability term itself.
+
+        Both listings are past the negotiability cap (so leverage ties at 1.0)
+        and equidistant from the target in opposite directions (so budget_fit
+        ties by symmetry) — the only way to construct a genuine tie between two
+        listings with different dates.
+        """
+        longer = score_listing(make_listing("L", price=490_000, listed_date="2026-01-01"), TARGET, TODAY)
+        shorter = score_listing(make_listing("S", price=510_000, listed_date="2026-03-01"), TARGET, TODAY)
+        assert longer.relevance_score == shorter.relevance_score
+        assert sorted([longer, shorter], key=sort_key_relevance)[0].key == longer.key
 
     def test_fully_tied_scores_break_on_price_then_key(self, make_listing) -> None:
         # Same date and symmetric deviation -> identical scores.

@@ -61,35 +61,17 @@ class TestRanking:
         assert cheap.key != dear.key
         assert cheap.price < dear.price
 
-    def test_without_a_budget_the_newest_listing_ranks_first(self, sample_listings, params) -> None:
+    def test_without_a_budget_the_most_negotiable_listing_ranks_first(
+        self, sample_listings, params
+    ) -> None:
+        """With no budget to match against, longest on market wins outright."""
         top = run(sample_listings, params, pageSize=1).items[0]
-        assert top.listed_date == max(l.listed_date for l in sample_listings)
+        assert top.listed_date == min(l.listed_date for l in sample_listings)
 
     def test_ranking_is_stable_across_identical_calls(self, sample_listings, params) -> None:
         first = [i.key for i in run(sample_listings, params, targetBudget=450_000, pageSize=50).items]
         second = [i.key for i in run(sample_listings, params, targetBudget=450_000, pageSize=50).items]
         assert first == second
-
-
-class TestSortOptions:
-    def test_price_ascending(self, sample_listings, params) -> None:
-        items = run(sample_listings, params, sort="priceAsc", pageSize=50).items
-        assert [i.price for i in items] == sorted(i.price for i in items)
-
-    def test_price_descending(self, sample_listings, params) -> None:
-        items = run(sample_listings, params, sort="priceDesc", pageSize=50).items
-        assert [i.price for i in items] == sorted((i.price for i in items), reverse=True)
-
-    def test_newest_first(self, sample_listings, params) -> None:
-        items = run(sample_listings, params, sort="newest", pageSize=50).items
-        assert [i.listed_date for i in items] == sorted(
-            (i.listed_date for i in items), reverse=True
-        )
-
-    def test_an_explicit_sort_overrides_relevance_order(self, sample_listings, params) -> None:
-        by_price = run(sample_listings, params, targetBudget=450_000, sort="priceAsc", pageSize=50)
-        scores = [i.relevance_score for i in by_price.items]
-        assert scores != sorted(scores, reverse=True)
 
 
 class TestPagingThroughResults:

@@ -1,6 +1,6 @@
 """Injectable "today".
 
-Recency scoring needs a reference date. Reading `date.today()` inside the
+Scoring needs a reference date to measure days on market against. Reading `date.today()` inside the
 formula would make every test time-dependent and every screenshot stale, so
 the reference date is resolved once per request through this seam and passed
 down explicitly.
@@ -18,6 +18,12 @@ REFERENCE_DATE_ENV = "LISTING_SEARCH_REFERENCE_DATE"
 
 
 def today() -> date:
+    """The date days-on-market is measured against, honouring the override.
+
+    Indirection exists so "now" is an input to the system rather than something
+    the scoring formula reaches out and grabs — which is what makes tests
+    deterministic and a demo's scores stable from one day to the next.
+    """
     override = os.environ.get(REFERENCE_DATE_ENV)
     if override:
         return date.fromisoformat(override)

@@ -39,7 +39,12 @@ class TestResponseShape:
 
     def test_score_breakdown_shape(self, client: TestClient) -> None:
         breakdown = client.get(SEARCH).json()["items"][0]["scoreBreakdown"]
-        assert set(breakdown) == {"budgetFit", "recency", "budgetWeight", "recencyWeight"}
+        assert set(breakdown) == {
+            "budgetFit",
+            "negotiability",
+            "budgetWeight",
+            "negotiabilityWeight",
+        }
 
     def test_key_is_the_composite_source_and_id(self, client: TestClient) -> None:
         """`id` is only unique per source, so the composite is the real key."""
@@ -73,7 +78,9 @@ class TestSupportingEndpoints:
             assert body["pageInfo"]["total"] > 0, city
 
 
-class TestCrud:
+class TestRawDataEndpoints:
+    """Read-only inspection of what search is working from."""
+
     def test_list_returns_the_whole_dataset(self, client: TestClient) -> None:
         assert len(client.get("/api/listings").json()) == 12
 
@@ -84,68 +91,25 @@ class TestCrud:
     def test_get_missing_is_404(self, client: TestClient) -> None:
         assert client.get("/api/listings/MLS_A/nope").status_code == 404
 
-    def test_create_then_read_back(self, client: TestClient, make_listing) -> None:
-        payload = make_listing("NEW", source="MLS_C").model_dump(by_alias=True, mode="json")
-        assert client.post("/api/listings", json=payload).status_code == 201
-        assert client.get("/api/listings/MLS_C/NEW").status_code == 200
-
-    def test_creating_a_duplicate_key_is_a_409(self, client: TestClient) -> None:
-        existing = client.get("/api/listings/MLS_A/A1").json()
-        response = client.post("/api/listings", json=existing)
-        assert response.status_code == 409
-        assert response.json()["error"]["code"] == "CONFLICT"
-
-    def test_same_id_from_a_different_source_is_not_a_conflict(
-        self, client: TestClient, make_listing
+    def test_same_id_from_a_different_source_is_a_different_listing(
+        self, client: TestClient
     ) -> None:
-        """The crux of the composite key: A1 from MLS_C is a different listing."""
-        payload = make_listing("A1", source="MLS_C").model_dump(by_alias=True, mode="json")
-        assert client.post("/api/listings", json=payload).status_code == 201
+        """The crux of the composite key: MLS_A:A1 and MLS_B:A1 are not the
+        same record, so `id` alone cannot address a listing."""
         assert client.get("/api/listings/MLS_A/A1").status_code == 200
+        assert client.get("/api/listings/MLS_B/A1").status_code == 404
 
-    def test_replace_updates_the_record(self, client: TestClient) -> None:
-        listing = client.get("/api/listings/MLS_A/A1").json()
-        listing["price"] = 123_456
-        assert client.put("/api/listings/MLS_A/A1", json=listing).status_code == 200
-        assert client.get("/api/listings/MLS_A/A1").json()["price"] == 123_456
+    def test_raw_listings_are_not_deduplicated(self, client: TestClient) -> None:
+        """This endpoint shows the feed union; collapsing is search's job."""
+        raw = client.get("/api/listings").json()
+        deduped = client.get(
+            "/api/listings/search", params={"dedupe": "true", "pageSize": 50}
+        ).json()
+        assert len(raw) == 12
+        assert deduped["pageInfo"]["total"] == 8
 
-    def test_replace_rejects_a_body_that_contradicts_the_url(self, client: TestClient) -> None:
-        listing = client.get("/api/listings/MLS_A/A1").json()
-        assert client.put("/api/listings/MLS_A/A2", json=listing).status_code == 409
-
-    def test_replace_missing_is_404(self, client: TestClient, make_listing) -> None:
-        payload = make_listing("GONE", source="MLS_Z").model_dump(by_alias=True, mode="json")
-        assert client.put("/api/listings/MLS_Z/GONE", json=payload).status_code == 404
-
-    def test_delete_removes_it(self, client: TestClient) -> None:
-        assert client.delete("/api/listings/MLS_A/A1").status_code == 204
-        assert client.get("/api/listings/MLS_A/A1").status_code == 404
-
-    def test_delete_is_not_idempotent_second_call_is_404(self, client: TestClient) -> None:
-        client.delete("/api/listings/MLS_A/A1")
-        assert client.delete("/api/listings/MLS_A/A1").status_code == 404
-
-    def test_create_with_an_invalid_body_is_a_400(self, client: TestClient) -> None:
-        assert client.post("/api/listings", json={"id": "X"}).status_code == 400
-
-
-class TestWritesAreVisibleToSearch:
-    """Search and CRUD share one repository; a write must change search."""
-
-    def test_deleting_a_listing_removes_it_from_results(self, client: TestClient) -> None:
-        before = client.get(SEARCH, params={"pageSize": 50}).json()["pageInfo"]["total"]
-        client.delete("/api/listings/MLS_A/A1")
-        after = client.get(SEARCH, params={"pageSize": 50}).json()["pageInfo"]["total"]
-        assert after == before - 1
-
-    def test_deleting_a_duplicate_changes_the_dedupe_count(self, client: TestClient) -> None:
-        client.delete("/api/listings/MLS_B/B7")  # A1's counterpart
-        body = client.get(SEARCH, params={"dedupe": "true", "pageSize": 50}).json()
-        assert body["pageInfo"]["total"] == 8  # still 8 properties, A1 now alone
-        a1 = next(i for i in body["items"] if i["key"] == "MLS_A:A1")
-        assert a1["mergedFrom"] == []
-
-    def test_repository_is_isolated_between_tests(self, client: TestClient) -> None:
-        """Proves the fixture resets state — otherwise the deletions above
-        would leak and later tests would fail mysteriously."""
-        assert len(client.get("/api/listings").json()) == 12
+    def test_the_api_exposes_no_write_endpoints(self, client: TestClient) -> None:
+        """The application is read-only. A write reaching the API would mean
+        surface nothing in the product uses."""
+        for method in (client.post, client.put, client.delete):
+            assert method("/api/listings/MLS_A/A1").status_code == 405

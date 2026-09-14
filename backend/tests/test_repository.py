@@ -14,7 +14,6 @@ from pathlib import Path
 import pytest
 
 from app.clock import REFERENCE_DATE_ENV, today
-from app.models import Listing
 from app.repository import InMemoryListingRepository
 
 
@@ -61,27 +60,13 @@ class TestCompositeKeying:
         assert repo.get("MLS_A", "A1") != repo.get("MLS_B", "A1")
 
 
-class TestMutation:
-    def test_upsert_inserts_a_new_listing(self, repository, make_listing) -> None:
-        repository.upsert(make_listing("NEW", source="MLS_C"))
-        assert len(repository.list_all()) == 13
-
-    def test_upsert_replaces_an_existing_key(self, repository, make_listing) -> None:
-        repository.upsert(make_listing("A1", source="MLS_A", price=1.0))
-        assert len(repository.list_all()) == 12
-        assert repository.get("MLS_A", "A1").price == 1.0
-
-    def test_delete_reports_whether_it_removed_anything(self, repository) -> None:
-        assert repository.delete("MLS_A", "A1") is True
-        assert repository.delete("MLS_A", "A1") is False
-
-    def test_cities_reflect_mutations(self, repository, make_listing) -> None:
-        repository.upsert(make_listing("NEW", source="MLS_C", city="Arlington"))
-        assert "Arlington" in repository.cities()
-
+class TestDerivedData:
     def test_cities_are_deduplicated_and_sorted(self, repository) -> None:
         cities = repository.cities()
         assert cities == sorted(set(cities))
+
+    def test_cities_cover_every_listing(self, repository) -> None:
+        assert set(repository.cities()) == {l.city for l in repository.list_all()}
 
     def test_list_all_returns_a_copy_callers_cannot_corrupt_the_store(
         self, repository

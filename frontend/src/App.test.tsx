@@ -251,9 +251,14 @@ describe('pagination', () => {
 })
 
 describe('result rows', () => {
-  it('shows the relevance score for each row', async () => {
+  it('shows the relevance score for each row once a filter is applied', async () => {
+    // Score is hidden on the default, unfiltered view (see the dedicated
+    // 'score column visibility' suite below), so this exercises the filtered
+    // case explicitly rather than relying on the default state.
     mockApi()
     render(<App />)
+    await screen.findByText('123 Main St, Apt 4B')
+    await userEvent.type(screen.getByLabelText(/keyword/i), 'condo')
     const row = (await screen.findByText('123 Main St, Apt 4B')).closest('tr')!
     expect(within(row).getByText('89.0')).toBeInTheDocument()
   })
@@ -295,7 +300,7 @@ describe('the address bar', () => {
 
   it('opens a shared link on the search it promised', async () => {
     // The bookmark / shared-link case: state comes from the URL, not defaults.
-    window.history.replaceState(null, '', '/?city=Reston&minBedrooms=3&page=1&pageSize=5&sort=relevance')
+    window.history.replaceState(null, '', '/?city=Reston&minBedrooms=3&page=1&pageSize=5')
     mockApi()
     render(<App />)
     await waitFor(() => expect(searchUrls.length).toBeGreaterThan(0))

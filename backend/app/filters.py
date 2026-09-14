@@ -11,6 +11,12 @@ from .models import Listing, SearchParams
 
 
 def matches_price(listing: Listing, min_price: float | None, max_price: float | None) -> bool:
+    """Is the price inside the requested window?
+
+    Both bounds are inclusive and independently optional, so a user can set a
+    floor, a ceiling, both, or neither. `None` means unbounded rather than
+    zero — otherwise an empty input box would silently exclude everything.
+    """
     if min_price is not None and listing.price < min_price:
         return False
     if max_price is not None and listing.price > max_price:
@@ -19,6 +25,11 @@ def matches_price(listing: Listing, min_price: float | None, max_price: float | 
 
 
 def matches_bedrooms(listing: Listing, min_bedrooms: int | None) -> bool:
+    """Does the listing meet the bedroom minimum?
+
+    Inclusive: asking for 3 bedrooms returns 3-bedroom homes. Separate from the
+    price predicate so each filter can be tested and changed in isolation.
+    """
     return min_bedrooms is None or listing.bedrooms >= min_bedrooms
 
 
@@ -46,6 +57,13 @@ def matches_keyword(listing: Listing, keyword: str | None) -> bool:
 
 
 def apply_filters(listings: list[Listing], params: SearchParams) -> list[Listing]:
+    """Narrow the corpus to the listings matching every active filter.
+
+    The conjunction of the predicates above — filters are ANDed, since a user
+    adding a filter expects fewer results, not more. This stage only decides
+    *membership*; how results are ordered is `scoring.py`'s concern, and keeping
+    the two apart is why either can change without touching the other.
+    """
     statuses = set(params.status) if params.status else None
     return [
         l

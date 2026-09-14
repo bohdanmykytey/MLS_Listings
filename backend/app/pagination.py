@@ -17,6 +17,13 @@ T = TypeVar("T")
 
 
 def paginate(items: list[T], page: int, page_size: int) -> tuple[list[T], PageInfo]:
+    """Slice one page out of an ordered result set, with the totals to navigate.
+
+    Returns the page alongside `PageInfo` rather than just the rows, because the
+    UI needs `total` and `totalPages` to render "showing 6-10 of 12" and to know
+    which page buttons to offer. Generic over the item type, since paging has
+    nothing to do with listings.
+    """
     total = len(items)
     total_pages = math.ceil(total / page_size) if total else 0
     start = (page - 1) * page_size

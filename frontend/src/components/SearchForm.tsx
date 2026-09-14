@@ -11,6 +11,8 @@ import {
   Button,
   Checkbox,
   FormControlLabel,
+  IconButton,
+  InputAdornment,
   MenuItem,
   Paper,
   Stack,
@@ -18,14 +20,8 @@ import {
   Tooltip,
   Typography,
 } from '@mui/material'
-import type { SearchFormState, SortOption } from '../api/types'
-
-const SORT_LABELS: Record<SortOption, string> = {
-  relevance: 'Relevance',
-  priceAsc: 'Price: low to high',
-  priceDesc: 'Price: high to low',
-  newest: 'Newest first',
-}
+import ClearIcon from '@mui/icons-material/Clear'
+import type { SearchFormState } from '../api/types'
 
 interface Props {
   form: SearchFormState
@@ -36,6 +32,29 @@ interface Props {
 }
 
 export function SearchForm({ form, cities, fieldIssues, onChange, onReset }: Props) {
+  /**
+   * A per-field clear control, so emptying one input is a single click rather
+   * than holding backspace. Only rendered once there is something to clear —
+   * an empty adornment slot on every field would just be clutter.
+   */
+  const clearAdornment = (name: keyof SearchFormState, label: string) =>
+    form[name]
+      ? {
+          endAdornment: (
+            <InputAdornment position="end">
+              <IconButton
+                size="small"
+                edge="end"
+                aria-label={`Clear ${label.toLowerCase()}`}
+                onClick={() => onChange({ [name]: '' } as Partial<SearchFormState>)}
+              >
+                <ClearIcon fontSize="inherit" />
+              </IconButton>
+            </InputAdornment>
+          ),
+        }
+      : {}
+
   /** Shared props for a numeric text input, including any server-side issue. */
   const numeric = (name: keyof SearchFormState, label: string, helper?: string) => ({
     label,
@@ -47,6 +66,7 @@ export function SearchForm({ form, cities, fieldIssues, onChange, onReset }: Pro
     type: 'number' as const,
     size: 'small' as const,
     fullWidth: true,
+    slotProps: { input: clearAdornment(name, label) },
   })
 
   return (
@@ -90,6 +110,7 @@ export function SearchForm({ form, cities, fieldIssues, onChange, onReset }: Pro
             onChange={(e) => onChange({ keyword: e.target.value })}
             error={Boolean(fieldIssues.keyword)}
             helperText={fieldIssues.keyword ?? ' '}
+            slotProps={{ input: clearAdornment('keyword', 'Keyword in description') }}
           />
         </Stack>
 
@@ -97,21 +118,6 @@ export function SearchForm({ form, cities, fieldIssues, onChange, onReset }: Pro
           <TextField
             {...numeric('targetBudget', 'Target budget', 'Drives 60% of the relevance score')}
           />
-          <TextField
-            select
-            label="Sort by"
-            size="small"
-            fullWidth
-            value={form.sort}
-            helperText=" "
-            onChange={(e) => onChange({ sort: e.target.value as SortOption })}
-          >
-            {Object.entries(SORT_LABELS).map(([value, label]) => (
-              <MenuItem key={value} value={value}>
-                {label}
-              </MenuItem>
-            ))}
-          </TextField>
           <TextField {...numeric('pageSize', 'Results per page')} />
         </Stack>
 
